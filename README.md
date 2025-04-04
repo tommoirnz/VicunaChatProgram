@@ -2,13 +2,15 @@
 
 This program is a combined speech recognition and Vicuna-based chatbot application. It uses various libraries for audio processing, text-to-speech, and language modeling.
 It uses Google for speech recognition so is relatively fast for that. Uses Microsoft edge voices and also SAPI 5. (you can choose)
-I'm using a 16G Nvidia 5070 graphics card. You will need something of that order.
+I'm using a 16G Nvidia 5070 graphics card. You will need something of that order. Even then this is run in 4 bit mode.This means the model paramaters are represented as 4 bits not the whole program.
+
 I use. Cude 12.8 and install Torch as follows at this time:
 pip install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cu128
+
 Everything else is relatively straight forward. I had a bit of difficulty downloading Vicuna
 from Hugging Face. You will need a free account probably. Sometimes it will download into cache
-but other times you can pre-download it and I store it in c:\models for example and you need to change that.
-Its using 4 bit version of Vicuna 13b and sometimes surprised you but not often.
+but other times you can pre-download it and I store it in c:\models for example or a desired dirctory.
+Its using 4 bit version of Vicuna 13b and sometimes surprises you but not often.
 It is good at Languages of course and bad at Maths! It is based on LLAMA. It's a good place to learn about LL models.
 I use Pycharm for everything in Python but you don't have to and can be done at the command prompt.
 Tom Moir 3/2/2025  Correspondence tomspeechnz@gmail.com
@@ -118,7 +120,7 @@ After installing all dependencies and setting up the model, follow these steps:
   ~~~
 
 When running 3 Tkinter windows should open. First one is speech recognition, second is the text input window
-from teh speech recognition (tha's where it goes), and the third is Vicuna + Text to Speech.
+from the speech recognition (that's where it goes), and the third is Vicuna + Text to Speech.
 You can use the third window on its own in text mode only if you like.
 ![My Image](illustration.jpg)
 
