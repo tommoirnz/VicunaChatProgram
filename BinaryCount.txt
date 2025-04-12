@@ -1,0 +1,31 @@
+command light 1 off command light 2 off command light 3 off command light 4 off
+command timer 1
+command light 1 off command light 2 off command light 3 off command light 4 on
+command timer 1
+command light 1 off command light 2 off command light 3 on command light 4 off
+command timer 1
+command light 1 off command light 2 off command light 3 on command light 4 on
+command timer 1
+command light 1 off command light 2 on command light 3 off command light 4 off
+command timer 1
+command light 1 off command light 2 on command light 3 off command light 4 on
+command timer 1
+command light 1 off command light 2 on command light 3 on command light 4 off
+command timer 1
+command light 1 off command light 2 on command light 3 on command light 4 on
+command timer 1
+command light 1 on command light 2 off command light 3 off command light 4 off
+command timer 1
+command light 1 on command light 2 off command light 3 off command light 4 on
+command timer 1
+command light 1 on command light 2 off command light 3 on command light 4 off
+command timer 1
+command light 1 on command light 2 off command light 3 on command light 4 on
+command timer 1
+command light 1 on command light 2 on command light 3 off command light 4 off
+command timer 1
+command light 1 on command light 2 on command light 3 off command light 4 on
+command timer 1
+command light 1 on command light 2 on command light 3 on command light 4 off
+command timer 1
+command light 1 on command light 2 on command light 3 on command light 4 on
