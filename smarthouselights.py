@@ -364,6 +364,15 @@ class ManualSwitches(tk.Frame):
 # -------------------------------
 # NEW HELPER: Process direct command input.
 def process_command_directly(user_text):
+    # Check if the command is asking for light status.
+    pattern_status = re.compile(r'\bcommands?\s+light\s+status\b', re.IGNORECASE)
+    match_status = pattern_status.search(user_text)
+    if match_status:
+        # Call the answer_light_status function to generate a status message.
+        status = answer_light_status()
+        return status  # This returns the status string directly.
+
+    # Existing command patterns:
     pattern_all = re.compile(r'\bcommands?\s+all\s+lights\s+(on|off)\b', re.IGNORECASE)
     match_all = pattern_all.search(user_text)
     if match_all:
