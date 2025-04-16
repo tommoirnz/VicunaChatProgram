@@ -5,8 +5,8 @@ from pprint import pprint
 BRIDGE_IP = "192.168.178.197"  # Replace with your actual bridge IP found rom the Hue app or using say Finf (free prorgam for PC or mobile)
 #First time you use you need to press the Hue Bridge button then run the program before 30seconds elapses
 #This created a .python_hue file in your home directory. Delete this if you want to reset things and start again.
-#This will detect the light numbers on the Bridge which you can later use in the sound to light app or the smarthouse lights prorgam
-#reason for this is the Philips Hub needs to know about your PC and it labels the lights its way. Should be 1,2,3,4 but if you ahve previous lights
+#This will detect the light numbers on the Bridge which you can later use in the sound to light app or the smarthouse lights program
+#reason for this is the Philips Hub needs to know about your PC and it labels the lights its way. Should be 1,2,3,4 but if you have previous lights
 #it may well number say 5,6,7,8 or something else. This tells you the real numbers available for later mapping.For example my bridge detects [11,7,6,5]
 #don't ask me why!
 
