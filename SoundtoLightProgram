@@ -1,0 +1,383 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import subprocess
+import tempfile
+import threading
+import time
+import os
+import colorsys
+
+import numpy as np
+from scipy.io import wavfile
+from scipy.signal import firwin, lfilter
+#Program is a sound to light as for a disco. Uses Philips smart lights the coloured Hue ones
+#Needs  Philips bridge and you will need the IP address to put in the program. Replace my one
+from phue import Bridge  # for controlling Philips Hue lights
+import simpleaudio as sa  # for audio playback
+
+# ---------- Global Variables and Philips Hue Setup ----------
+
+real_lights_enabled = True  # Enable/disable real Hue updates
+hue_bridge = None
+HUE_BRIDGE_IP = "192.168.178.197"  # Set to your actual Hue Bridge IP
+#Replace IP with your one. recommend use Fing program to find IP address or use the app as it has it on there anyway.
+# Updated mapping based on your group: Your group could be different from these.
+# Group "Bedroom" now contains lights: ['11', '7', '6', '5']
+# You may decide that simulated light 1 corresponds to physical light 11,
+# simulated light 2 to 7, simulated light 3 to 6, simulated light 4 to 5.
+SIMULATED_TO_PHYSICAL = {1: 11, 2: 7, 3: 6, 4: 5}
+
+
+def connect_hue_bridge(ip_address):
+    """Attempt to connect to a Philips Hue Bridge."""
+    global hue_bridge
+    try:
+        hue_bridge = Bridge(ip_address)
+        hue_bridge.connect()  # May prompt you to press the bridge button.
+        print(f"Connected to Hue Bridge at {ip_address}")
+    except Exception as e:
+        print(f"Hue Bridge connection error: {e}")
+        hue_bridge = None
+
+
+def rgb_to_xy(r, g, b):
+    """Convert RGB (0-255) to CIE 1931 x,y (for Hue lights)."""
+    r, g, b = r / 255.0, g / 255.0, b / 255.0
+    r = ((r + 0.055) / 1.055) ** 2.4 if r > 0.04045 else r / 12.92
+    g = ((g + 0.055) / 1.055) ** 2.4 if g > 0.04045 else g / 12.92
+    b = ((b + 0.055) / 1.055) ** 2.4 if b > 0.04045 else b / 12.92
+    X = r * 0.664511 + g * 0.154324 + b * 0.162028
+    Y = r * 0.283881 + g * 0.668433 + b * 0.047685
+    Z = r * 0.000088 + g * 0.072310 + b * 0.986039
+    if (X + Y + Z) == 0:
+        return [0, 0]
+    return [X / (X + Y + Z), Y / (X + Y + Z)]
+
+
+def update_real_light(sim_light_number, brightness, color=None):
+    """
+    Update physical Philips Hue light for a channel (brightness: 0-255).
+    Uses a mapping from simulated light numbers to actual Hue light IDs.
+    Optionally send a color (RGB tuple 0-255).
+    """
+    global real_lights_enabled, hue_bridge
+    if not real_lights_enabled:
+        return
+
+    physical_light = SIMULATED_TO_PHYSICAL.get(sim_light_number)
+    if physical_light is None:
+        print(f"No physical mapping for simulated light {sim_light_number}.")
+        return
+
+    if hue_bridge is not None:
+        try:
+            if brightness < 5:
+                hue_bridge.set_light(physical_light, {'on': False})
+                print(f"Real light {physical_light} turned off.")
+            else:
+                bri = int(np.clip(brightness / 255 * 253 + 1, 1, 254))
+                state = {'on': True, 'bri': bri}
+                if color is not None:
+                    state['xy'] = rgb_to_xy(*color)
+                hue_bridge.set_light(physical_light, state)
+                print(f"Real light {physical_light} set to brightness {bri} with state {state}.")
+        except Exception as e:
+            print(f"Error updating real light {physical_light}: {e}")
+
+
+def reset_real_lights():
+    """Turn off physical Hue lights that are mapped (simulated lights 1-4)."""
+    for sim_light in SIMULATED_TO_PHYSICAL.keys():
+        update_real_light(sim_light, 0)
+
+
+# ---------- Exponential Energy Envelope ----------
+
+def exponential_envelope_energy(signal, beta=0.95):
+    """
+    Compute an energy envelope using exponential smoothing.
+    For each sample:
+      env[0] = signal[0]^2
+      env[k+1] = beta * env[k] + (1-beta) * (signal[k])^2
+    """
+    env = np.zeros_like(signal)
+    env[0] = signal[0] ** 2
+    for k in range(1, len(signal)):
+        env[k] = beta * env[k - 1] + (1 - beta) * (signal[k] ** 2)
+    return env
+
+
+# ---------- FIR Filter and Envelope Extraction ----------
+
+def design_filters(fs, numtaps=101):
+    """Design FIR filters for four frequency bands given sample rate fs."""
+    fir_0_5 = firwin(numtaps, cutoff=5000, fs=fs, pass_zero=True)
+    fir_5_10 = firwin(numtaps, [5000, 10000], fs=fs, pass_zero=False)
+    fir_10_15 = firwin(numtaps, [10000, 15000], fs=fs, pass_zero=False)
+    fir_15_20 = firwin(numtaps, [15000, 20000], fs=fs, pass_zero=False)
+    return fir_0_5, fir_5_10, fir_10_15, fir_15_20
+
+
+def process_audio_exponential(audio_signal, fs, filters, beta):
+    """
+    For each filter, process the audio:
+      - Apply FIR filter,
+      - Compute the energy envelope using exponential smoothing,
+      - Normalize to range 0-1.
+    Returns list of four envelope arrays.
+    """
+    envelopes = []
+    for f in filters:
+        filtered = lfilter(f, 1.0, audio_signal)
+        env_energy = exponential_envelope_energy(filtered, beta)
+        envelopes.append(env_energy)
+    norm_envelopes = []
+    for env in envelopes:
+        max_val = np.max(env) if np.max(env) > 0 else 1
+        norm_envelopes.append(env / max_val)
+    return norm_envelopes
+
+
+# ---------- Color Mapping Helper ----------
+
+def get_channel_color(channel, envelope_value):
+    """
+    Returns an RGB tuple based on channel and envelope value (0-1).
+    Each channel is assigned a base hue (degrees), then modulated.
+    """
+    base_hues = {1: 0, 2: 120, 3: 240, 4: 300}  # red, green, blue, magenta/pinkish
+    base = base_hues.get(channel, 0)
+    # Modulate by adding up to 30° based on envelope value.
+    hue = (base + envelope_value * 30) % 360
+    h = hue / 360.0
+    s = 1.0
+    v = envelope_value  # use envelope value as brightness
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+# ---------- Tkinter GUI for Sound-to-Light System ----------
+
+class SoundToLightWindow(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sound-to-Light System")
+        self.geometry("800x600")
+        self.configure(bg="white")
+
+        # Audio data and processing variables.
+        self.fs = None  # sample rate
+        self.audio_signal = None
+        self.duration = None
+        self.time_axis = None
+        self.envelopes = None  # list of 4 envelope arrays (normalized to 0-1)
+        self.frame_idx = 0
+        self.play_obj = None  # For audio playback
+
+        # Block size for decimation.
+        # Using a block size of ~50 ms (at 44100 Hz) is 2205 samples.
+        # You can reduce this value to capture faster transients.
+        self.block_size = 2205
+
+        # Gain sliders (dB) for channels 1-4. Now set from +60 dB at the top to -20 dB at the bottom.
+        self.gain_vars = {i: tk.DoubleVar(value=0.0) for i in range(1, 5)}
+
+        # Beta slider for exponential envelope smoothing.
+        self.beta_var = tk.DoubleVar(value=0.95)
+
+        self.create_widgets()
+        self.light_radius = 40
+        self.light_ids = {}
+        self.light_states = {1: 0, 2: 0, 3: 0, 4: 0}  # brightness values (0-255)
+        self.create_light_display()
+        self.reset_lights()
+
+        self.processing_thread = None
+        self.keep_processing = False
+
+    def create_widgets(self):
+        top_frame = tk.Frame(self, bg="white")
+        top_frame.pack(fill="x", pady=10)
+
+        load_btn = tk.Button(top_frame, text="Load Audio File", command=self.load_audio_file)
+        load_btn.pack(side="left", padx=10)
+
+        self.real_toggle_btn = tk.Button(top_frame, text="Real Lights Enabled", command=self.toggle_real_lights)
+        self.real_toggle_btn.pack(side="left", padx=10)
+
+        # Beta Slider for exponential smoothing.
+        beta_frame = tk.Frame(top_frame, bg="white")
+        beta_frame.pack(side="left", padx=10)
+        tk.Label(beta_frame, text="Beta (smoothing)").pack()
+        beta_slider = tk.Scale(beta_frame, from_=0.0, to=0.99, resolution=0.01, orient="vertical",
+                               variable=self.beta_var)
+        beta_slider.pack()
+
+        # Gain Sliders for channels. Now with a maximum of +60 dB.
+        sliders_frame = tk.Frame(self, bg="white")
+        sliders_frame.pack(fill="x", pady=10)
+        for i in range(1, 5):
+            frame = tk.Frame(sliders_frame, bg="white")
+            frame.pack(side="left", padx=10)
+            tk.Label(frame, text=f"Ch {i} Gain (dB)").pack()
+            slider = tk.Scale(frame, from_=60, to=-20, resolution=0.5, orient="vertical",
+                              variable=self.gain_vars[i])
+            slider.pack()
+
+        bottom_frame = tk.Frame(self, bg="white")
+        bottom_frame.pack(fill="x", pady=10)
+        self.start_btn = tk.Button(bottom_frame, text="Start Processing", command=self.start_processing,
+                                   state="disabled")
+        self.start_btn.pack(side="left", padx=10)
+        self.stop_btn = tk.Button(bottom_frame, text="Stop Processing", command=self.stop_processing, state="disabled")
+        self.stop_btn.pack(side="left", padx=10)
+
+    def create_light_display(self):
+        self.canvas = tk.Canvas(self, bg="white", height=200)
+        self.canvas.pack(fill="both", expand=True, pady=10)
+        spacing = 50
+        for i in range(1, 5):
+            x = spacing + (i - 1) * (2 * self.light_radius + spacing) + self.light_radius
+            y = 100
+            light_id = self.canvas.create_oval(
+                x - self.light_radius, y - self.light_radius,
+                x + self.light_radius, y + self.light_radius,
+                fill="#000000", outline="gray", width=2
+            )
+            self.canvas.create_text(x, y + self.light_radius + 15, text=f"Light {i}")
+            self.light_ids[i] = light_id
+
+    def toggle_real_lights(self):
+        global real_lights_enabled
+        real_lights_enabled = not real_lights_enabled
+        status = "Enabled" if real_lights_enabled else "Disabled"
+        self.real_toggle_btn.config(text=f"Real Lights {status}")
+        print(f"Real lights {status.lower()}.")
+
+    def reset_lights(self):
+        for ch in range(1, 5):
+            self.canvas.itemconfig(self.light_ids[ch], fill="#000000")
+            self.light_states[ch] = 0
+        reset_real_lights()
+
+    def load_audio_file(self):
+        path = filedialog.askopenfilename(title="Select Audio File",
+                                          filetypes=[("Audio Files", "*.mp3 *.wav *.flac *.ogg"), ("All Files", "*.*")])
+        if not path:
+            return
+
+        temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_wav.close()
+        ffmpeg_cmd = ["ffmpeg", "-y", "-i", path, "-ar", "44100", "-ac", "1", temp_wav.name]
+        try:
+            subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            print("Resampling completed.")
+        except Exception as e:
+            messagebox.showerror("FFMPEG Error", f"Error resampling file: {e}")
+            return
+
+        try:
+            fs, data = wavfile.read(temp_wav.name)
+        except Exception as e:
+            messagebox.showerror("WAV Read Error", f"Error reading WAV file: {e}")
+            os.unlink(temp_wav.name)
+            return
+        os.unlink(temp_wav.name)
+
+        if data.dtype != np.float32:
+            if data.dtype == np.int16:
+                data = data.astype(np.float32) / 32768.0
+            else:
+                data = data.astype(np.float32)
+
+        self.fs = fs
+        self.audio_signal = data.flatten()
+        self.duration = len(self.audio_signal) / fs
+        self.time_axis = np.linspace(0, self.duration, len(self.audio_signal))
+        print(f"Loaded audio: duration {self.duration:.2f} sec, fs {fs} Hz")
+
+        self.filters = design_filters(fs)
+        beta_val = self.beta_var.get()
+        self.envelopes = process_audio_exponential(self.audio_signal, fs, self.filters, beta_val)
+        self.decimated_envs = []
+        for env in self.envelopes:
+            n_blocks = len(env) // self.block_size
+            trimmed = env[:n_blocks * self.block_size]
+            blocks = trimmed.reshape(n_blocks, self.block_size)
+            # Instead of averaging, use the maximum to preserve dynamic peaks.
+            block_peaks = blocks.max(axis=1)
+            self.decimated_envs.append(block_peaks)
+        self.n_frames = len(self.decimated_envs[0])
+        print(f"Processed envelopes with {self.n_frames} frames (~{self.block_size / self.fs * 1000:.0f}ms per frame).")
+
+        self.start_btn.config(state="normal")
+        self.frame_idx = 0
+
+    def play_original(self):
+        if self.audio_signal is None or self.fs is None:
+            return
+        audio_int16 = np.int16(self.audio_signal * 32767)
+        try:
+            self.play_obj = sa.play_buffer(audio_int16.tobytes(), 1, 2, self.fs)
+            print("Audio playback started...")
+        except Exception as e:
+            print(f"Error playing audio: {e}")
+
+    def stop_audio(self):
+        if self.play_obj is not None:
+            try:
+                self.play_obj.stop()
+                print("Audio playback stopped.")
+            except Exception as e:
+                print(f"Error stopping audio: {e}")
+            self.play_obj = None
+
+    def start_processing(self):
+        if self.envelopes is None:
+            return
+        # Start the original audio playback.
+        self.play_original()
+        self.keep_processing = True
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.processing_thread = threading.Thread(target=self.process_loop, daemon=True)
+        self.processing_thread.start()
+
+    def stop_processing(self):
+        self.keep_processing = False
+        self.start_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.stop_audio()
+
+    def process_loop(self):
+        while self.keep_processing and self.frame_idx < self.n_frames:
+            brightness_vals = {}
+            color_vals = {}
+            for ch in range(1, 5):
+                db_gain = self.gain_vars[ch].get()
+                lin_gain = 10 ** (db_gain / 20.0)
+                env_value = self.decimated_envs[ch - 1][self.frame_idx]
+                env_modulated = np.clip(env_value * lin_gain, 0, 1)
+                brightness = int(env_modulated * 255)
+                brightness_vals[ch] = brightness
+                color_vals[ch] = get_channel_color(ch, env_modulated)
+            self.update_lights(brightness_vals, color_vals)
+            for ch in range(1, 5):
+                update_real_light(ch, brightness_vals[ch], color=color_vals[ch])
+            time.sleep(self.block_size / self.fs)
+            self.frame_idx += 1
+        self.keep_processing = False
+        self.frame_idx = 0
+        print("Processing finished.")
+
+    def update_lights(self, brightness_vals, color_vals):
+        for ch, brightness in brightness_vals.items():
+            r, g, b = color_vals[ch]
+            color_hex = f"#{r:02x}{g:02x}{b:02x}"
+            self.canvas.itemconfig(self.light_ids[ch], fill=color_hex)
+
+
+if __name__ == "__main__":
+    connect_hue_bridge(HUE_BRIDGE_IP)
+    app = SoundToLightWindow()
+    app.mainloop()
