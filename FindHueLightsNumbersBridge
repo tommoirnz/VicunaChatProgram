@@ -1,0 +1,73 @@
+from phue import Bridge
+from pprint import pprint
+
+# Set the IP address of your Philips Hue Bridge.
+BRIDGE_IP = "192.168.178.197"  # Replace with your actual bridge IP found rom the Hue app or using say Finf (free prorgam for PC or mobile)
+#First time you use you need to press the Hue Bridge button then run the program before 30seconds elapses
+#This created a .python_hue file in your home directory. Delete this if you want to reset things and start again.
+#This will detect the light numbers on the Bridge which you can later use in the sound to light app or the smarthouse lights prorgam
+#reason for this is the Philips Hub needs to know about your PC and it labels the lights its way. Should be 1,2,3,4 but if you ahve previous lights
+#it may well number say 5,6,7,8 or something else. This tells you the real numbers available for later mapping.For example my bridge detects [11,7,6,5]
+#don't ask me why!
+
+def main():
+    print("Connecting to Hue Bridge at", BRIDGE_IP)
+    b = Bridge(BRIDGE_IP)
+
+    # Force re-registration if needed; if already registered, no button press will be required.
+    # Uncomment this line to force registration (if necessary):
+    # b.connect()
+
+    # Retrieve the full API data.
+    api_data = b.get_api()
+    print("\n--- Full API Data ---")
+    pprint(api_data)
+
+    # List Lights
+    print("\n--- Lights ---")
+    lights = api_data.get("lights", {})
+    if lights:
+        for light_id, details in lights.items():
+            name = details.get("name", "Unknown")
+            light_type = details.get("type", "Unknown")
+            state = details.get("state", {})
+            on_state = "On" if state.get("on", False) else "Off"
+            print(f"Light ID {light_id}: Name = {name}, Type = {light_type}, State = {on_state}")
+    else:
+        print("No lights found.")
+
+    # List Groups
+    print("\n--- Groups ---")
+    groups = api_data.get("groups", {})
+    if groups:
+        for group_id, details in groups.items():
+            name = details.get("name", "Unknown")
+            group_lights = details.get("lights", [])
+            print(f"Group ID {group_id}: Name = {name}, Lights = {group_lights}")
+    else:
+        print("No groups found.")
+
+    # List Scenes
+    print("\n--- Scenes ---")
+    scenes = api_data.get("scenes", {})
+    if scenes:
+        for scene_id, details in scenes.items():
+            name = details.get("name", "Unknown")
+            print(f"Scene ID {scene_id}: Name = {name}")
+    else:
+        print("No scenes found.")
+
+    # List Sensors
+    print("\n--- Sensors ---")
+    sensors = api_data.get("sensors", {})
+    if sensors:
+        for sensor_id, details in sensors.items():
+            name = details.get("name", "Unknown")
+            sensor_type = details.get("type", "Unknown")
+            print(f"Sensor ID {sensor_id}: Name = {name}, Type = {sensor_type}")
+    else:
+        print("No sensors found.")
+
+
+if __name__ == '__main__':
+    main()
