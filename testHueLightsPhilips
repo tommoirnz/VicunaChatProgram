@@ -5,7 +5,7 @@ import sys
 from phue import Bridge
 import time
 import numpy as np
-#Just a test foir your lights stand alone before anything else. Make sure this works
+#Just a test for your lights stand alone before anything else. Make sure this works
 #And you have your IP address in place (below). Make sure you have the right mappings too
 #your Bridge numberings may not be 1,2,3,4 but say 5,6,7,8 or something else
 # ---------------------------
