@@ -3,8 +3,9 @@
 import os
 
 os.environ["TKDND_LIBRARY"] = r"C:\tkdnd"  # Ensure your tkdnd files are located here
-#Best one to day and handles lights with delays etc ask it to turn on light 1 for 10 seconds then turn it off
-#Can also run scripts to sequence lights
+# Best one today and handles lights with delays etc. Ask it to turn on light 1 for 10 seconds then turn it off.
+# Can also run scripts to sequence lights.
+#Takes care of when the Philips Hue Hub has different numbers from the simulated lights eg here 1 maps to 5,2 to 6 etc
 # -------------------------------
 # Import standard libraries
 import sys  # System-specific parameters and functions
@@ -86,6 +87,9 @@ light_sim_window = None  # Will be assigned when the Light Simulator window is c
 # Global variable for the Philips Hue Bridge connection.
 hue_bridge = None  # Will be set after connecting to the Hue Bridge
 
+# Global flag to control real light updates.
+real_lights_enabled = True  # Set to False to disable physical light changes
+
 # -------------------------------
 # LANGUAGE OPTIONS for Speech Recognition
 LANGUAGE_OPTIONS = [
@@ -126,6 +130,8 @@ def get_sapi_voice_options():
 
 
 SAPI_VOICE_OPTIONS = get_sapi_voice_options()
+
+
 # -------------------------------
 # NEW CLASS: CommandScriptRunner
 class CommandScriptRunner:
@@ -169,8 +175,7 @@ class CommandScriptRunner:
                     for light_number in light_sim_window.light_states.keys():
                         if light_sim_window.light_states[light_number].lower() != state:
                             light_sim_window.update_light(light_number, state)
-                            if light_number in [1, 2]:
-                                update_real_light(light_number, state)
+                            update_real_light(light_number, state)
                             print(
                                 f"[CommandScriptRunner] 'All lights' command executed: Light {light_number} set to {state}.")
 
@@ -202,8 +207,7 @@ class CommandScriptRunner:
                     current_state = light_sim_window.light_states.get(light_num, "off")
                     if current_state.lower() != state.lower():
                         light_sim_window.update_light(light_num, state)
-                        if light_num in [1, 2]:
-                            update_real_light(light_num, state)
+                        update_real_light(light_num, state)
                         print(f"[CommandScriptRunner] Command executed: Light {light_num} turned {state.lower()}.")
 
                 print(
@@ -235,8 +239,7 @@ class CommandScriptRunner:
                     current_state = light_sim_window.light_states.get(light_num, "off")
                     if current_state.lower() != state.lower():
                         light_sim_window.update_light(light_num, state)
-                        if light_num in [1, 2]:
-                            update_real_light(light_num, state)
+                        update_real_light(light_num, state)
                         print(
                             f"[CommandScriptRunner] Natural command executed: Light {light_num} turned {state.lower()}.")
 
@@ -298,10 +301,12 @@ def get_default_voice_for_language(lang_code, voice_options):
             return voice
     return None
 
-#--------------------------------
+
+# --------------------------------
 def separate_commands(cmd_str):
     # Insert a space before any "COMMAND" that is immediately preceded by a non-space character.
     return re.sub(r'(\S)(COMMAND)', r'\1 \2', cmd_str)
+
 
 # -------------------------------
 # NEW HELPER: Preprocess AI responses.
@@ -327,17 +332,28 @@ def answer_light_status():
 
 # -------------------------------
 # NEW HELPER: Update real Philips Hue light.
-def update_real_light(light_number, state):
-    # Only update available Hue lights (assume only lights 1 and 2 are available)
-    available_hue_lights = [1, 2]
-    if hue_bridge is not None and light_number in available_hue_lights:
+def update_real_light(simulated_light_number, state):
+    global real_lights_enabled
+    # Only update available Hue lights if real lights are enabled.
+    if not real_lights_enabled:
+        return
+    # Look up the physical light number using the mapping panel from the Light Simulator.
+    try:
+        physical_light_number = int(light_sim_window.mapping_spinboxes[simulated_light_number].get())
+    except Exception as e:
+        print("Error retrieving mapping for simulated light", simulated_light_number, e)
+        physical_light_number = simulated_light_number  # Fallback to simulated number
+
+    if hue_bridge is not None:
         if state.lower() == "on":
-            hue_bridge.set_light(light_number, 'on', True)
-            hue_bridge.set_light(light_number, 'bri', 254)
-            print(f"Real light {light_number} turned on.")
+            hue_bridge.set_light(physical_light_number, 'on', True)
+            hue_bridge.set_light(physical_light_number, 'bri', 254)
+            print(
+                f"Real light {physical_light_number} (mapped from simulated light {simulated_light_number}) turned on.")
         else:
-            hue_bridge.set_light(light_number, 'on', False)
-            print(f"Real light {light_number} turned off.")
+            hue_bridge.set_light(physical_light_number, 'on', False)
+            print(
+                f"Real light {physical_light_number} (mapped from simulated light {simulated_light_number}) turned off.")
 
 
 # -------------------------------
@@ -357,8 +373,7 @@ class ManualSwitches(tk.Frame):
         current_state = self.sim_window.light_states.get(light_number, "off")
         new_state = "off" if current_state.lower() == "on" else "on"
         self.sim_window.update_light(light_number, new_state)
-        if light_number in [1, 2]:
-            update_real_light(light_number, new_state)
+        update_real_light(light_number, new_state)
 
 
 # -------------------------------
@@ -381,8 +396,7 @@ def process_command_directly(user_text):
         for light_number, current in light_sim_window.light_states.items():
             if current.lower() != desired_state:
                 light_sim_window.update_light(light_number, desired_state)
-                if light_number in [1, 2]:
-                    update_real_light(light_number, desired_state)
+                update_real_light(light_number, desired_state)
                 changed = True
         if changed:
             return f"COMMAND all lights {desired_state}"
@@ -411,8 +425,7 @@ def process_command_directly(user_text):
             return f"Light {light_number} is already {desired_state.lower()}."
         else:
             light_sim_window.update_light(light_number, desired_state)
-            if light_number in [1, 2]:
-                update_real_light(light_number, desired_state)
+            update_real_light(light_number, desired_state)
             return f"COMMAND light {light_number} {desired_state.lower()}"
     return None
 
@@ -443,8 +456,7 @@ def parse_and_handle_command(response_text):
                 for light_number in light_sim_window.light_states.keys():
                     if light_sim_window.light_states[light_number].lower() != state:
                         light_sim_window.update_light(light_number, state)
-                        if light_number in [1, 2]:
-                            update_real_light(light_number, state)
+                        update_real_light(light_number, state)
                         print(f"'All lights' command executed: Light {light_number} set to {state}.")
 
             print(f"Scheduling 'all lights' command with {cumulative_delay} seconds delay.")
@@ -474,8 +486,7 @@ def parse_and_handle_command(response_text):
                 current_state = light_sim_window.light_states.get(light_num, "off")
                 if current_state.lower() != state.lower():
                     light_sim_window.update_light(light_num, state)
-                    if light_num in [1, 2]:
-                        update_real_light(light_num, state)
+                    update_real_light(light_num, state)
                     print(f"Command executed: Light {light_num} turned {state.lower()}.")
 
             print(f"Scheduling command for Light {light_number} to turn {state} with {cumulative_delay} seconds delay.")
@@ -506,8 +517,7 @@ def parse_and_handle_command(response_text):
                 current_state = light_sim_window.light_states.get(light_num, "off")
                 if current_state.lower() != state.lower():
                     light_sim_window.update_light(light_num, state)
-                    if light_num in [1, 2]:
-                        update_real_light(light_num, state)
+                    update_real_light(light_num, state)
                     print(f"Natural command executed: Light {light_num} turned {state.lower()}.")
 
             print(
@@ -699,6 +709,7 @@ def vicuna_chat_response(user_text, temperature=0.9, top_p=0.9, rep_penalty=1.1)
         "Valid commands include 'COMMAND light X on', 'COMMAND light X off', and 'COMMAND all lights on' or 'COMMAND all lights off'. "
         "If a delay is needed between commands, include timer commands using the format 'COMMAND timer X', where X is the number of seconds to wait before executing the next command. "
         "Important: Do not insert an initial timer command unless explicitly requested. "
+        "Important: Do not put numbers or labels before COMMAND lines and separate COMMAND statements with a space or next line"
         "Additionally, when you receive a message that starts with 'BLIP:', interpret it as an image caption generated by the BLIP module. "
         "Provide a thoughtful commentary or ask clarifying questions about the image. For example, if you receive 'BLIP: a dog playing in the park on a sunny day', "
         "you might reply 'That sounds like a lively scene! Can you tell me more about the environment or the dog?' "
@@ -736,7 +747,6 @@ def vicuna_chat_response(user_text, temperature=0.9, top_p=0.9, rep_penalty=1.1)
 
 
 # -------------------------------
-# -------------------------------
 # New Light Simulator Window with Script Controls
 class LightSimulatorWindow(tk.Toplevel):
     def __init__(self, master):
@@ -761,7 +771,7 @@ class LightSimulatorWindow(tk.Toplevel):
             self.canvas.create_text(x, y + self.light_radius + 15, text=f"Light {i}")
             self.light_ids[i] = light_id
 
-        # Create a control frame at bottom for manual switches and script control
+        # Create a control frame at bottom for manual switches, real light toggle and script control
         control_frame = tk.Frame(self)
         control_frame.pack(side="bottom", fill="x", pady=10)
 
@@ -770,6 +780,10 @@ class LightSimulatorWindow(tk.Toplevel):
         manual_frame.pack(side="top", fill="x", pady=5)
         self.manual_switches = ManualSwitches(manual_frame, self)
         self.manual_switches.pack(side="left")
+
+        # Add a toggle button for real light updates.
+        self.toggle_real_button = tk.Button(control_frame, text="Real Lights Enabled", command=self.toggle_real_lights)
+        self.toggle_real_button.pack(side="left", padx=5)
 
         # Script control buttons
         script_frame = tk.Frame(control_frame)
@@ -781,8 +795,32 @@ class LightSimulatorWindow(tk.Toplevel):
         self.stop_script_button = tk.Button(script_frame, text="Stop Script", command=self.stop_script)
         self.stop_script_button.pack(side="left", padx=5)
 
+        # ---- Added Mapping Panel below script controls ----
+        mapping_frame = tk.Frame(self)
+        mapping_frame.pack(side="bottom", fill="x", pady=5)
+        tk.Label(mapping_frame, text="Simulated → Physical Light Mapping:").pack(side="top", anchor="w", padx=5)
+        self.mapping_spinboxes = {}
+        # For simulated lights 1 to 4, create Spinboxes with defaults 5, 6, 7, and 11 respectively.
+        for i, default in zip(range(1, 5), [5, 6, 7, 11]):
+            subframe = tk.Frame(mapping_frame)
+            subframe.pack(side="top", fill="x", padx=5, pady=2)
+            tk.Label(subframe, text=f"Simulated Light {i}:").pack(side="left")
+            spin = tk.Spinbox(subframe, from_=1, to=50, width=5)
+            spin.delete(0, tk.END)
+            spin.insert(0, str(default))
+            spin.pack(side="left", padx=5)
+            self.mapping_spinboxes[i] = spin
+        # ------------------------------------------------------
+
         # Instantiate our command script runner
         self.script_runner = CommandScriptRunner()
+
+    def toggle_real_lights(self):
+        global real_lights_enabled
+        real_lights_enabled = not real_lights_enabled
+        status_text = "Enabled" if real_lights_enabled else "Disabled"
+        self.toggle_real_button.config(text=f"Real Lights {status_text}")
+        print(f"Real lights have been {status_text.lower()}.")
 
     def toggle_light(self, light_number):
         current = self.light_states.get(light_number, "off")
@@ -815,11 +853,13 @@ class LightSimulatorWindow(tk.Toplevel):
         if not self.script_runner.commands_text:
             messagebox.showwarning("No Script", "No command script loaded!")
             return
-        threading.Thread(target=self.script_runner.run_commands, args=(self.script_runner.commands_text,), daemon=True).start()
+        threading.Thread(target=self.script_runner.run_commands, args=(self.script_runner.commands_text,),
+                         daemon=True).start()
 
     def stop_script(self):
         self.script_runner.stop()
         messagebox.showinfo("Script Stopped", "Scheduled commands have been cancelled.")
+
 
 # -------------------------------
 # Combined ASR Application (Main Tkinter Window)
@@ -1367,10 +1407,8 @@ class ImageDropWindow(tk.Toplevel):
 
     def send_caption(self):
         if self.current_caption:
-           # self.vicuna_chat_window.insert_user_text(self.current_caption)
-           self.vicuna_chat_window.insert_user_text("BLIP: " + self.current_caption)
-
-           messagebox.showinfo("Caption Sent", "Caption sent to Vicuna Chat.")
+            self.vicuna_chat_window.insert_user_text("BLIP: " + self.current_caption)
+            messagebox.showinfo("Caption Sent", "Caption sent to Vicuna Chat.")
 
 
 # -------------------------------
@@ -1417,10 +1455,10 @@ if __name__ == "__main__":
     # Use the new Light Simulator window
     light_sim_window = LightSimulatorWindow(root)
 
-    # Optionally, turn off physical Hue lights at startup.
+    # Turn off physical Hue lights at startup.
     if hue_bridge is not None:
-        update_real_light(1, "off")
-        update_real_light(2, "off")
+        for light_id in range(1, 5):
+            update_real_light(light_id, "off")
 
     # (Optional) Uncomment the following line to generate the binary counter script automatically.
     # generate_binary_count_script("binary_count.txt")
